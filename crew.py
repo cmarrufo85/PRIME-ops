@@ -43,6 +43,12 @@ CREW_REGISTRY = {
         "experienced": True,
         "role": "supervisor",
     },
+    "5054807855": {
+        "name": "Carlos",
+        "city": "Lubbock",
+        "experienced": True,
+        "role": "supervisor",
+    },
 }
 
 
