@@ -260,12 +260,12 @@ def _process_message(from_number: str, body_text: str, media_items: list):
 
     tech = get_tech(from_number)
 
-    # ── Supervisor commands ──────────────────────────────────────────────────
-    if is_supervisor(from_number):
+    # ── Supervisor commands (text only — screenshots fall through to vision) ──
+    if is_supervisor(from_number) and not media_items:
         _handle_supervisor_message(from_number, tech, body_text, media_items)
         return
 
-    # ── Tech message routing ─────────────────────────────────────────────────
+    # ── Tech + supervisor screenshot/message routing ─────────────────────────
     tech_state = get_tech_state(from_number)
     current_state = tech_state.get("state", "idle")
 
