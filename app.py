@@ -1,5 +1,6 @@
 import logging
 import re
+import threading
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -228,30 +229,41 @@ def sms_webhook():
     body_text = request.form.get("Body", "").strip()
     num_media = int(request.form.get("NumMedia", 0))
 
-    # Collect media
+    # Collect media — copy out of request context before threading
     media_items = []
     for i in range(num_media):
-        url_key = f"MediaUrl{i}"
-        ct_key = f"MediaContentType{i}"
         media_items.append({
-            "url": request.form.get(url_key, ""),
-            "content_type": request.form.get(ct_key, "image/jpeg"),
+            "url": request.form.get(f"MediaUrl{i}", ""),
+            "content_type": request.form.get(f"MediaContentType{i}", "image/jpeg"),
         })
 
+    # Respond to Twilio immediately — vision/AI calls can take 20-30s
+    # and Twilio times out at 15s. All processing runs in a background thread.
+    threading.Thread(
+        target=_process_message,
+        args=(from_number, body_text, media_items),
+        daemon=True,
+    ).start()
+
+    return ("", 204)
+
+
+def _process_message(from_number: str, body_text: str, media_items: list):
+    """Handle all message logic in a background thread."""
     # ── Unknown sender ───────────────────────────────────────────────────────
     if not is_registered(from_number):
         send_sms(
             from_number,
             "This is the Prime Fiber ops line. Contact your supervisor to get registered.",
         )
-        return ("", 204)
+        return
 
     tech = get_tech(from_number)
 
     # ── Supervisor commands ──────────────────────────────────────────────────
     if is_supervisor(from_number):
         _handle_supervisor_message(from_number, tech, body_text, media_items)
-        return ("", 204)
+        return
 
     # ── Tech message routing ─────────────────────────────────────────────────
     tech_state = get_tech_state(from_number)
@@ -273,7 +285,7 @@ def sms_webhook():
             else:
                 set_tech_state(from_number, wallfish_photos_received=count)
                 send_sms(from_number, f"Got {count}/2 wallfish photos. Send {2 - count} more.")
-            return ("", 204)
+            return
 
         # Try EOD first if tech has already submitted jobs today
         today_jobs = tech_state.get("today_job_ids", [])
@@ -282,7 +294,7 @@ def sms_webhook():
                 from_number, tech, image["url"], image["content_type"]
             )
             if eod_handled:
-                return ("", 204)
+                return
 
         # Default: work order screenshot
         _handle_work_order_screenshot(
@@ -296,7 +308,6 @@ def sms_webhook():
             addons = _parse_notes_for_addons(body_text)
             append_job_note(current_job_id, body_text)
 
-            # Handle wallfish declared in follow-up text
             if addons["wallfish"]:
                 job = get_job(current_job_id)
                 if job and not job.get("wallfish"):
@@ -306,7 +317,7 @@ def sms_webhook():
                         from_number,
                         "✓ Note logged. Wallfish declared — send 2 photos to document.",
                     )
-                    return ("", 204)
+                    return
 
             send_sms(from_number, f"✓ Note added to WO#{current_job_id}.")
         else:
@@ -314,8 +325,6 @@ def sms_webhook():
                 from_number,
                 "PRIME: No active job on file. Send a work order screenshot first.",
             )
-
-    return ("", 204)
 
 
 def _handle_supervisor_message(from_number: str, tech: dict, body: str, media_items: list):
