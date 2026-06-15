@@ -207,11 +207,21 @@ def _handle_eod_screenshot(from_number: str, tech: dict, media_url: str, content
 
 @app.route("/sms", methods=["POST"])
 def sms_webhook():
-    # Twilio signature validation
+    # Reconstruct the URL Twilio signed — must match exactly.
+    # Behind Railway's proxy, request.url is http:// so we use X-Forwarded-Proto.
     validator = RequestValidator(TWILIO_AUTH_TOKEN)
-    url = WEBHOOK_BASE_URL + "/sms" if WEBHOOK_BASE_URL else request.url
-    if not validator.validate(url, request.form, request.headers.get("X-Twilio-Signature", "")):
-        logger.warning("Invalid Twilio signature from %s", request.remote_addr)
+    if WEBHOOK_BASE_URL:
+        url = WEBHOOK_BASE_URL.rstrip("/") + "/sms"
+    else:
+        proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+        host = request.headers.get("X-Forwarded-Host", request.host)
+        url = f"{proto}://{host}/sms"
+
+    sig = request.headers.get("X-Twilio-Signature", "")
+    logger.info("Validating webhook — url=%s sig_present=%s", url, bool(sig))
+
+    if not validator.validate(url, request.form, sig):
+        logger.warning("Invalid Twilio signature from %s | url=%s", request.remote_addr, url)
         return "Forbidden", 403
 
     from_number = request.form.get("From", "").strip()
